@@ -14,7 +14,6 @@ use automerge::{
     Patch,
 };
 use futures::SinkExt;
-use ignore::{Walk, WalkBuilder};
 use notify::{RecursiveMode, Result as NotifyResult, Watcher};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -308,30 +307,7 @@ impl DocumentActor {
                 }
 
                 // We only want to process these messages for files that are not ignored.
-                // To use the same logic for which files are ignored, iterate through all files
-                // using ignore::Walk, and try to find this file.
-                // TODO: Request a better way to do this with the "ignore" crate.
-                if !self
-                    .build_walk()
-                    .filter_map(Result::ok)
-                    .filter(|dir_entry| {
-                        dir_entry
-                            .file_type()
-                            .expect("Couldn't get file type of dir entry.")
-                            .is_file()
-                    })
-                    .any(|dir_entry| {
-                        let walked_file_path = self
-                            .file_path_for_uri(
-                                dir_entry
-                                    .path()
-                                    .to_str()
-                                    .expect("Could not convert PathBuf to str"),
-                            )
-                            .expect("Could not convert URI to file path");
-                        walked_file_path == file_path
-                    })
-                {
+                if crate::ignore::is_ignored(&self.base_dir, absolute_file_path) {
                     return Err(EditorProtocolMessageError {
                         code: -1,
                         message: "File is ignored".into(),
@@ -662,27 +638,8 @@ impl DocumentActor {
         }
     }
 
-    fn build_walk(&mut self) -> Walk {
-        let ignored_things = [".git", ".ethersync"];
-        // TODO: How to deal with binary files?
-        WalkBuilder::new(self.base_dir.clone())
-            .standard_filters(true)
-            .hidden(false)
-            // Interestingly, the standard filters don't seem to ignore .git.
-            .filter_entry(move |dir_entry| {
-                let name = dir_entry
-                    .path()
-                    .file_name()
-                    .expect("Failed to get file name from path.")
-                    .to_str()
-                    .expect("Failed to convert OsStr to str");
-                !ignored_things.contains(&name)
-            })
-            .build()
-    }
-
     fn read_current_content_from_dir(&mut self, init: bool) {
-        self.build_walk()
+        crate::ignore::build_walk(&self.base_dir)
             .filter_map(Result::ok)
             .filter(|dir_entry| {
                 dir_entry

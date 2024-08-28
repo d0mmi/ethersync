@@ -2,6 +2,7 @@ pub mod actors;
 pub mod daemon;
 pub mod document;
 pub mod editor;
+pub mod ignore;
 pub mod logging;
 pub mod ot;
 pub mod peer;
