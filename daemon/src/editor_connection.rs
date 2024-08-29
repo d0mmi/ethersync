@@ -5,23 +5,21 @@ use std::{
 };
 
 use anyhow::{bail, Context};
-use futures::SinkExt;
 use tracing::debug;
 
 use crate::{
-    editor::EditorHandle,
     ot::OTServer,
     sandbox,
     types::{
         EditorProtocolMessageError, EditorProtocolMessageFromEditor, EditorProtocolMessageToEditor,
-        EditorProtocolObject, InsideMessage, RevisionedEditorTextDelta,
+        InsideMessage,
     },
 };
 
-/// Represents a connection to an editor. Knows how to communicate with it, and handles the OT.
+/// Represents a connection to an editor. Handles the OT. To keep the code testable and sync, we do
+/// the actual sending of messages in the daemon, and the functions here just *calculate* them.
 pub struct EditorConnection {
     id: String,
-    handle: EditorHandle,
     // TODO: Feels a bit duplicated here?
     base_dir: PathBuf,
     /// There's one OTServer per open buffer.
@@ -29,10 +27,9 @@ pub struct EditorConnection {
 }
 
 impl EditorConnection {
-    pub fn new(id: String, handle: EditorHandle, base_dir: &Path) -> Self {
+    pub fn new(id: String, base_dir: &Path) -> Self {
         Self {
             id,
-            handle,
             base_dir: base_dir.to_owned(),
             ot_servers: HashMap::new(),
         }
@@ -42,14 +39,23 @@ impl EditorConnection {
         self.ot_servers.contains_key(file_path)
     }
 
-    pub async fn message_from_inside(&mut self, message: &InsideMessage) -> anyhow::Result<()> {
+    pub fn message_from_inside(
+        &mut self,
+        message: &InsideMessage,
+    ) -> Vec<EditorProtocolMessageToEditor> {
         match message {
             InsideMessage::Edit { file_path, delta } => {
                 if let Some(ot_server) = self.ot_servers.get_mut(file_path) {
                     debug!("Applying incoming CRDT patch for {file_path}");
                     let rev_text_delta_for_editor = ot_server.apply_crdt_change(delta);
-                    self.send_to_editor(rev_text_delta_for_editor, file_path)
-                        .await?;
+
+                    vec![EditorProtocolMessageToEditor::Edit {
+                        uri: format!("file://{}", self.absolute_path_for_file_path(file_path)),
+                        delta: rev_text_delta_for_editor,
+                    }]
+                } else {
+                    // We don't have the file open, just do nothing.
+                    vec![]
                 }
             }
             InsideMessage::Cursor {
@@ -59,26 +65,25 @@ impl EditorConnection {
                 cursor_id,
             } => {
                 let uri = format!("file://{}", self.absolute_path_for_file_path(file_path));
-                let message = EditorProtocolMessageToEditor::Cursor {
+                vec![EditorProtocolMessageToEditor::Cursor {
                     name: name.clone(),
                     userid: cursor_id.clone(),
                     uri,
                     ranges: ranges.clone(),
-                };
-                self.send_to_editor_client(EditorProtocolObject::Request(message))
-                    .await?;
+                }]
             }
             _ => {
                 debug!("Ignoring message from inside: {:#?}", message);
+                vec![]
             }
         }
-        Ok(())
     }
 
-    pub async fn message_from_outside(
+    pub fn message_from_outside(
         &mut self,
         message: &EditorProtocolMessageFromEditor,
-    ) -> Result<InsideMessage, EditorProtocolMessageError> {
+    ) -> Result<(InsideMessage, Vec<EditorProtocolMessageToEditor>), EditorProtocolMessageError>
+    {
         fn anyhow_err_to_protocol_err(error: anyhow::Error) -> EditorProtocolMessageError {
             EditorProtocolMessageError {
                 code: -1, // TODO: Should the error codes differ per error?
@@ -123,7 +128,7 @@ impl EditorConnection {
                 let ot_server = OTServer::new(text);
                 self.ot_servers.insert(file_path.clone(), ot_server);
 
-                Ok(InsideMessage::Open { file_path })
+                Ok((InsideMessage::Open { file_path }, vec![]))
             }
             EditorProtocolMessageFromEditor::Close { uri } => {
                 let file_path = self
@@ -132,7 +137,7 @@ impl EditorConnection {
                 debug!("Got a 'close' message for {file_path}");
                 self.ot_servers.remove(&file_path);
 
-                Ok(InsideMessage::Close { file_path })
+                Ok((InsideMessage::Close { file_path }, vec![]))
             }
             EditorProtocolMessageFromEditor::Edit {
                 delta: rev_delta,
@@ -159,54 +164,37 @@ impl EditorConnection {
                 let (delta_for_crdt, rev_deltas_for_editor) =
                     ot_server.apply_editor_operation(rev_delta.clone());
 
-                for rev_delta_for_editor in rev_deltas_for_editor {
-                    self.send_to_editor(rev_delta_for_editor, &file_path)
-                        .await
-                        .map_err(anyhow_err_to_protocol_err)?;
-                }
+                let messages_to_editor = rev_deltas_for_editor
+                    .into_iter()
+                    .map(|rev_delta_for_editor| EditorProtocolMessageToEditor::Edit {
+                        uri: format!("file://{}", self.absolute_path_for_file_path(&file_path)),
+                        delta: rev_delta_for_editor,
+                    })
+                    .collect();
 
-                Ok(InsideMessage::Edit {
-                    file_path,
-                    delta: delta_for_crdt,
-                })
+                Ok((
+                    InsideMessage::Edit {
+                        file_path,
+                        delta: delta_for_crdt,
+                    },
+                    messages_to_editor,
+                ))
             }
             EditorProtocolMessageFromEditor::Cursor { uri, ranges } => {
                 let file_path = self
                     .file_path_for_uri(uri)
                     .map_err(anyhow_err_to_protocol_err)?;
-                Ok(InsideMessage::Cursor {
-                    cursor_id: self.id.clone(),
-                    name: env::var("USER").ok(),
-                    file_path,
-                    ranges: ranges.clone(),
-                })
+                Ok((
+                    InsideMessage::Cursor {
+                        cursor_id: self.id.clone(),
+                        name: env::var("USER").ok(),
+                        file_path,
+                        ranges: ranges.clone(),
+                    },
+                    vec![],
+                ))
             }
         }
-    }
-
-    async fn send_to_editor(
-        &mut self,
-        rev_delta: RevisionedEditorTextDelta,
-        file_path: &str,
-    ) -> anyhow::Result<()> {
-        let message = EditorProtocolMessageToEditor::Edit {
-            uri: format!("file://{}", self.absolute_path_for_file_path(file_path)),
-            delta: rev_delta,
-        };
-        self.send_to_editor_client(EditorProtocolObject::Request(message))
-            .await
-    }
-
-    // TODO: Make private in the end.
-    pub async fn send_to_editor_client(
-        &mut self,
-        message: EditorProtocolObject,
-    ) -> anyhow::Result<()> {
-        self.handle
-            .send(message)
-            .await
-            .context("Failed to send message to editor. It probably has disconnected.")
-        // TODO: Remove on error in daemon?
     }
 
     fn absolute_path_for_file_path(&self, file_path: &str) -> String {
@@ -230,5 +218,89 @@ impl EditorConnection {
                 format!("Path '{absolute_path}' is not within base dir '{base_dir_string}'")
             })?
             .to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::factories::*;
+    use pretty_assertions::assert_eq;
+    use temp_dir::TempDir;
+
+    #[test]
+    fn opening_file_in_wrong_dir_fails() {
+        let dir = TempDir::new().expect("Failed to create temp directory");
+        let mut editor_connection = EditorConnection::new("1".to_string(), dir.path());
+
+        let result =
+            editor_connection.message_from_outside(&EditorProtocolMessageFromEditor::Open {
+                uri: "file:///foobar/file".to_string(),
+            });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn edits_are_oted() {
+        let dir = TempDir::new().expect("Failed to create temp directory");
+        let file = dir.path().join("file");
+        std::fs::write(&file, "hello").expect("Failed to write file");
+
+        let mut editor_connection = EditorConnection::new("1".to_string(), dir.path());
+
+        // Editor opens the file.
+        let result =
+            editor_connection.message_from_outside(&EditorProtocolMessageFromEditor::Open {
+                uri: format!("file://{}", file.display()),
+            });
+        assert_eq!(
+            result,
+            Ok((
+                InsideMessage::Open {
+                    file_path: "file".to_string()
+                },
+                vec![]
+            ))
+        );
+
+        // Daemon sends an edit.
+        let delta = insert(1, "x"); // hello -> hxello
+        let result = editor_connection.message_from_inside(&InsideMessage::Edit {
+            file_path: "file".to_string(),
+            delta,
+        });
+        assert_eq!(
+            result,
+            vec![EditorProtocolMessageToEditor::Edit {
+                uri: format!("file://{}", file.display()),
+                delta: rev_ed_delta(0, ed_delta_single((0, 1), (0, 1), "x"))
+            }]
+        );
+
+        // Editor sends an edit.
+        let delta = rev_ed_delta(0, ed_delta_single((0, 3), (0, 3), "y")); // hello -> helylo
+        let result =
+            editor_connection.message_from_outside(&EditorProtocolMessageFromEditor::Edit {
+                uri: format!("file://{}", file.display()),
+                delta,
+            });
+        let (inside_message, messages_to_editor) = result.unwrap();
+        let delta = insert(4, "y"); // Position gets transformed!
+        assert_eq!(
+            inside_message,
+            InsideMessage::Edit {
+                file_path: "file".to_string(),
+                delta
+            }
+        );
+        assert_eq!(
+            messages_to_editor,
+            vec![EditorProtocolMessageToEditor::Edit {
+                uri: format!("file://{}", file.display()),
+                delta: rev_ed_delta(1, ed_delta_single((0, 1), (0, 1), "x")) // Delta is still the
+                                                                             // same.
+            }]
+        );
     }
 }

@@ -12,6 +12,7 @@ use automerge::{
     sync::{Message as AutomergeSyncMessage, State as SyncState},
     Patch,
 };
+use futures::SinkExt;
 use notify::{RecursiveMode, Result as NotifyResult, Watcher};
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -82,6 +83,7 @@ type DocChangedReceiver = broadcast::Receiver<()>;
 pub struct DocumentActor {
     doc_message_rx: mpsc::Receiver<DocMessage>,
     doc_changed_ping_tx: DocChangedSender,
+    editor_handles: HashMap<EditorId, EditorHandle>,
     editor_connections: HashMap<EditorId, EditorConnection>,
     /// The Document is the main I/O managed resource of this actor.
     crdt_doc: Document,
@@ -123,6 +125,7 @@ impl DocumentActor {
         let mut s = Self {
             doc_message_rx,
             doc_changed_ping_tx,
+            editor_handles: HashMap::default(),
             editor_connections: HashMap::default(),
             base_dir,
             crdt_doc,
@@ -252,8 +255,10 @@ impl DocumentActor {
                 let editor_connection_id = self.cursor_id(id);
                 self.editor_connections.insert(
                     id,
-                    EditorConnection::new(editor_connection_id, editor_handle, &self.base_dir),
+                    EditorConnection::new(editor_connection_id, &self.base_dir),
                 );
+
+                self.editor_handles.insert(id, editor_handle);
             }
             DocMessage::CloseEditorConnection(editor_id) => {
                 self.editor_connections.remove(&editor_id);
@@ -261,6 +266,8 @@ impl DocumentActor {
                 let cursor_id = self.cursor_id(editor_id);
                 debug!("Deleting cursor {cursor_id}");
                 self.maybe_delete_cursor_position(&cursor_id).await;
+
+                self.editor_handles.remove(&editor_id);
             }
         }
     }
@@ -293,16 +300,22 @@ impl DocumentActor {
         editor_id: EditorId,
         message: &EditorProtocolMessageFromEditor,
     ) -> Result<(), EditorProtocolMessageError> {
-        let inside_message = self
+        let (inside_message, messages_to_editor) = self
             .editor_connections
             .get_mut(&editor_id)
             .expect("Could not get editor connection")
-            .message_from_outside(message)
-            .await?;
+            .message_from_outside(message)?;
 
         self.inside_message_to_doc(&inside_message).await;
         self.broadcast_to_editors(Some(editor_id), &inside_message)
             .await;
+        for message_to_editor in messages_to_editor {
+            self.send_to_editor_client(
+                &editor_id,
+                EditorProtocolObject::Request(message_to_editor),
+            )
+            .await;
+        }
 
         Ok(())
     }
@@ -398,17 +411,15 @@ impl DocumentActor {
     }
 
     async fn send_to_editor_client(&mut self, editor_id: &EditorId, message: EditorProtocolObject) {
-        let editor_connection = self
-            .editor_connections
+        let handle = self
+            .editor_handles
             .get_mut(editor_id)
-            .expect("Could not get editor connection");
-        editor_connection
-            .send_to_editor_client(message)
-            .await
-            .unwrap_or_else(|err| {
-                error!("Failed to send message to editor: {err} Removing editor.");
-                self.editor_connections.remove(editor_id);
-            });
+            .expect("Could not get editor handle");
+
+        handle.send(message).await.unwrap_or_else(|err| {
+            error!("Failed to send message to editor: {err} Removing editor.");
+            self.editor_connections.remove(editor_id);
+        });
     }
 
     fn maybe_write_files_changed_in_file_deltas(&mut self, file_deltas: &Vec<FileTextDelta>) {
@@ -539,15 +550,19 @@ impl DocumentActor {
                 continue;
             }
 
-            self.editor_connections
+            let messages_to_editor = self
+                .editor_connections
                 .get_mut(&editor_id)
                 .expect("Could not get editor connection")
-                .message_from_inside(message)
-                .await
-                .unwrap_or_else(|err| {
-                    error!("Failed to send message to editor: {err} Removing editor.");
-                    self.editor_connections.remove(&editor_id);
-                });
+                .message_from_inside(message);
+
+            for message_to_editor in messages_to_editor {
+                self.send_to_editor_client(
+                    &editor_id,
+                    EditorProtocolObject::Request(message_to_editor),
+                )
+                .await;
+            }
         }
     }
 
