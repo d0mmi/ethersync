@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, path::PathBuf};
 
 use anyhow::Context;
+use tracing::info;
 use tracing::debug;
 
 use crate::{
@@ -99,7 +100,8 @@ impl EditorConnection {
 
         match message {
             EditorProtocolMessageFromEditor::Open { uri } => {
-                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
+                info!("Open: {uri}");
+                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -142,7 +144,8 @@ impl EditorConnection {
                 ))
             }
             EditorProtocolMessageFromEditor::Close { uri } => {
-                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
+                info!("Close: {uri}");
+                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -166,8 +169,9 @@ impl EditorConnection {
                     "Handling RevDelta from editor: revision {:#?}, delta {:#?}",
                     revision, delta
                 );
+                info!("Edit: {uri}");
 
-                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
+                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -217,7 +221,8 @@ impl EditorConnection {
                 ))
             }
             EditorProtocolMessageFromEditor::Cursor { uri, ranges } => {
-                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
+                info!("Cursor: {uri}");
+                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;

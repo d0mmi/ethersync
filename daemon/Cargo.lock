@@ -822,6 +822,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "automerge",
+ "bytes",
  "clap",
  "derive_more",
  "dissimilar",
@@ -847,6 +848,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+ "windows",
 ]
 
 [[package]]

@@ -3,6 +3,7 @@ use automerge::Prop;
 use derive_more::{AsRef, Deref, Display};
 use serde::{Deserialize, Serialize};
 use std::path::{self, Path, PathBuf};
+use tracing::info;
 
 /// Paths like these are guaranteed to be absolute.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, Hash, Deref, AsRef, Display)]
@@ -54,22 +55,46 @@ impl RelativePath {
         Self(path.into())
     }
 
-    pub fn try_from_absolute(base_dir: &Path, path: &AbsolutePath) -> Result<Self, anyhow::Error> {
-        let project_dir = path::absolute(base_dir).with_context(|| {
+    #[cfg(windows)]
+    pub fn strip_extended_prefix(p: &Path) -> std::path::PathBuf {
+        let s = p.display().to_string();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            // Rebuild as PathBuf
+            std::path::PathBuf::from(stripped)
+        } else {
+            p.to_path_buf()
+        }
+    }
+
+    pub fn try_from_absolute(base_dir: &Path, path: &AbsolutePath) -> anyhow::Result<Self> {
+        #[cfg(windows)]
+        let base_dir = Self::strip_extended_prefix(base_dir);
+        #[cfg(not(windows))]
+        let base_dir = base_dir.to_path_buf();
+
+        #[cfg(windows)]
+        let path = Self::strip_extended_prefix(path);
+        #[cfg(not(windows))]
+        let path = path.to_path_buf();
+
+        let project_dir = path::absolute(&base_dir).with_context(|| {
             format!(
                 "Failed to get absolute path for project directory '{}'",
                 base_dir.display()
             )
         })?;
-        let relative_path = path.strip_prefix(&project_dir).with_context(|| {
-            format!(
-                "Failed to strip project directory '{}' from path {path}",
-                project_dir.display()
-            )
-        })?;
+        let relative_path = path
+            .strip_prefix(&project_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to strip project directory '{}' from path {}",
+                    project_dir.display(),
+                    path.display()
+                )
+            })?;
 
-        if relative_path.iter().count() == 0 {
-            bail!("base_dir was equal to path when computing relative path");
+        if relative_path.components().count() == 0 {
+            anyhow::bail!("base_dir was equal to path when computing relative path");
         }
 
         Ok(Self(relative_path.to_path_buf()))
@@ -92,7 +117,12 @@ pub struct FileUri(String);
 
 impl FileUri {
     pub fn to_absolute_path(&self) -> AbsolutePath {
+        #[cfg(unix)]
         let path = Path::new(&self.0[7..]);
+        #[cfg(windows)]
+        let path = Path::new(&self.0[8..]);
+        let test =path.to_str().unwrap();
+        info!("path: {test}");
         AbsolutePath::try_from(path.to_path_buf())
             .expect("File URI should contain an absolute path")
     }

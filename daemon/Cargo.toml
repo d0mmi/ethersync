@@ -65,6 +65,8 @@ tracing-subscriber = { version = "0.3.18", default-features = false, features = 
     "fmt",
     "local-time",
 ] }
+windows = "0.53.0"
+bytes = "1.9.0"
 
 [dependencies.tokio]
 version = "1"

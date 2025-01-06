@@ -1,31 +1,40 @@
-//! Provides a way to write / read a socket through stdin, (un)packing content-length encoding.
+//! Provides a way to write/read a socket (or TCP on Windows) through stdin, (un)packing content-length encoding.
 //!
-//! The idea is that a daemon process communicates through newline separated jsonrpc messages,
-//! whereas LSP expects an HTTP-like Base Protocol:
-//! https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#baseProtocol
+//! The idea is that a daemon process communicates via newline-separated jsonrpc messages,
+//! whereas LSP expects HTTP-like Base Protocol with content-length headers.
 //!
-//! This forwarder thus
-//! - takes jsonrpc from a socket (usually a daemon) and wraps it content-length encoded data to stdout
-//! - takes content-length encoded data from stdin (as sent by an LSP client) and writes it
-//!   "unpacked" to the socket
+//! This forwarder:
+//! - Takes jsonrpc from a socket/TCP (daemon) and wraps it into content-length-encoded data to stdout
+//! - Takes content-length-encoded data from stdin (as sent by an LSP client) and writes it
+//!   "unpacked" to the socket/TCP.
+
+use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::path::Path;
 use tokio::io::{BufReader, BufWriter};
+#[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(unix)]
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
+#[cfg(windows)]
+use tokio::net::TcpStream;
+#[cfg(windows)]
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodec};
+use tracing::info;
 
-pub async fn connection(socket_path: &Path) -> anyhow::Result<()> {
-    // Construct socket object, which send/receive newline-delimited messages.
-    let stream = UnixStream::connect(socket_path).await?;
-    let (socket_read, socket_write) = stream.into_split();
-    let mut socket_read = FramedRead::new(socket_read, LinesCodec::new());
-    let mut socket_write = FramedWrite::new(socket_write, LinesCodec::new());
+/// **Public** function remains the same name/signature.
+/// It just calls our platform-specific `connect_stream`.
+pub async fn connection(socket_path: &Path) -> Result<()> {
+    // On Unix, connect to the Unix domain socket. On Windows, connect via TCP.
+    let (mut socket_read, mut socket_write) = connect_stream(socket_path).await?;
 
     // Construct stdin/stdout objects, which send/receive messages with a Content-Length header.
     let mut stdin = FramedRead::new(BufReader::new(tokio::io::stdin()), ContentLengthCodec);
     let mut stdout = FramedWrite::new(BufWriter::new(tokio::io::stdout()), ContentLengthCodec);
 
+    // Spawn a task that reads from the socket and forwards to stdout.
     tokio::spawn(async move {
         while let Some(Ok(message)) = socket_read.next().await {
             stdout
@@ -33,17 +42,51 @@ pub async fn connection(socket_path: &Path) -> anyhow::Result<()> {
                 .await
                 .expect("Failed to write to stdout");
         }
-        // Socket was closed.
+        // If the socket/TCP is closed, exit.
         std::process::exit(0);
     });
 
+    // Main thread: read from stdin and write to the socket/TCP.
     while let Some(Ok(message)) = stdin.next().await {
         socket_write.send(message).await?;
     }
-    // Stdin was closed.
+
+    // If stdin is closed, exit.
     std::process::exit(0);
 }
 
+/// Connect to the socket or TCP stream and return framed `LinesCodec` readers/writers.
+#[cfg(unix)]
+async fn connect_stream(
+    socket_path: &Path,
+) -> Result<(FramedRead<OwnedReadHalf, LinesCodec>, FramedWrite<OwnedWriteHalf, LinesCodec>)> {
+    // Unix domain socket approach
+    let stream = UnixStream::connect(socket_path).await?;
+    let (read_half, write_half) = stream.into_split();
+    let reader = FramedRead::new(read_half, LinesCodec::new());
+    let writer = FramedWrite::new(write_half, LinesCodec::new());
+    Ok((reader, writer))
+}
+
+/// On Windows, we just do TCP to 127.0.0.1:9000 (or any other port you want).
+#[cfg(windows)]
+async fn connect_stream(
+    socket_path: &Path,
+) -> Result<(FramedRead<OwnedReadHalf, LinesCodec>, FramedWrite<OwnedWriteHalf, LinesCodec>)> {
+    // Convert the Path to a UTF-8 string:
+    let address_str = socket_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in the provided path"))?;
+
+    info!("{address_str}");
+    let stream = TcpStream::connect("127.0.0.1:9000").await?;
+    let (read_half, write_half) = stream.into_split();
+    let reader = FramedRead::new(read_half, LinesCodec::new());
+    let writer = FramedWrite::new(write_half, LinesCodec::new());
+    Ok((reader, writer))
+}
+
+/// Codec that wraps messages in `Content-Length:` headers (LSP style).
 struct ContentLengthCodec;
 
 impl Encoder<String> for ContentLengthCodec {
@@ -62,48 +105,48 @@ impl Decoder for ContentLengthCodec {
     type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // Find the position of the Content-Length header.
+        // Find the position of the "Content-Length: " header.
         let c = b"Content-Length: ";
         let start_of_header = match src.windows(c.len()).position(|window| window == c) {
             Some(pos) => pos,
             None => return Ok(None),
         };
 
-        // Find the end of the line after that.
+        // Find the end-of-headers marker (\r\n\r\n or \n\n).
         let (end_of_line, end_of_line_bytes) = match src[start_of_header + c.len()..]
             .windows(4)
             .position(|window| window == b"\r\n\r\n")
         {
             Some(pos) => (pos, 4),
-            // Even though this is not valid in terms of the spec, also
-            // accept plain newline separators in order to simplify manual testing.
             None => match src[start_of_header + c.len()..]
                 .windows(2)
-                .position(|window| (window == b"\n\n"))
+                .position(|window| window == b"\n\n")
             {
                 Some(pos) => (pos, 2),
                 None => return Ok(None),
             },
         };
 
-        // Parse the content length.
-        let content_length = std::str::from_utf8(
-            &src[start_of_header + c.len()..start_of_header + c.len() + end_of_line],
-        )?
-        .parse()?;
+        // Parse the Content-Length number.
+        let content_length_str = &src[start_of_header + c.len()
+            ..start_of_header + c.len() + end_of_line];
+        let content_length: usize = std::str::from_utf8(content_length_str)?.parse()?;
+
+        // The start of the actual JSON content.
         let content_start = start_of_header + c.len() + end_of_line + end_of_line_bytes;
 
-        // Recommended optimization, in anticipation for future calls to `decode`.
-        src.reserve(content_start + content_length);
-
-        // Check if we have enough content.
+        // If we haven't received enough bytes yet, wait.
         if src.len() < content_start + content_length {
             return Ok(None);
         }
 
-        // Return the body of the message.
+        // Advance the buffer past the headers.
         src.advance(content_start);
+
+        // Split out the JSON text.
         let content = src.split_to(content_length);
-        Ok(Some(std::str::from_utf8(&content)?.to_string()))
+        let text = std::str::from_utf8(&content)?.to_string();
+
+        Ok(Some(text))
     }
 }
