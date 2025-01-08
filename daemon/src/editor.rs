@@ -230,7 +230,7 @@ pub async fn make_editor_connection(_socket_path: PathBuf, document_handle: Docu
 #[cfg(windows)]
 async fn accept_editor_loop_win(document_handle: DocumentActorHandle) -> std::io::Result<()> {
     // Listen on TCP instead of a Unix socket
-    let listener = TcpListener::bind("127.0.0.1:9000").await?;
+    let listener = TcpListener::bind("127.0.0.1:9000").await?; // todo make no longer static
     info!("Listening on 127.0.0.1:9000 (Windows) for editor connections");
 
     loop {

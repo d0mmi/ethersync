@@ -18,7 +18,7 @@ impl AbsolutePath {
     }
 
     pub fn to_file_uri(&self) -> FileUri {
-        FileUri::try_from(format!("file://{}", self.0.display()))
+        FileUri::try_from(format!("file:///{}", self.0.display())) // todo change for win and unix independently
             .expect("Should be able to create File URI from absolute path")
     }
 }

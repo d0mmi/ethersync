@@ -17,9 +17,11 @@ use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
 #[cfg(windows)]
-use tokio::net::TcpStream;
+use tokio::net::windows::named_pipe::NamedPipeServer; // todo maybe named pipe is wrong and tcp was correct?
 #[cfg(windows)]
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::windows::named_pipe::NamedPipeClient;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodec};
 use tracing::info;
@@ -29,7 +31,6 @@ use tracing::info;
 pub async fn connection(socket_path: &Path) -> Result<()> {
     // On Unix, connect to the Unix domain socket. On Windows, connect via TCP.
     let (mut socket_read, mut socket_write) = connect_stream(socket_path).await?;
-
     // Construct stdin/stdout objects, which send/receive messages with a Content-Length header.
     let mut stdin = FramedRead::new(BufReader::new(tokio::io::stdin()), ContentLengthCodec);
     let mut stdout = FramedWrite::new(BufWriter::new(tokio::io::stdout()), ContentLengthCodec);
@@ -48,6 +49,7 @@ pub async fn connection(socket_path: &Path) -> Result<()> {
 
     // Main thread: read from stdin and write to the socket/TCP.
     while let Some(Ok(message)) = stdin.next().await {
+        info!("Sending message: {}", message);
         socket_write.send(message).await?;
     }
 
@@ -72,17 +74,21 @@ async fn connect_stream(
 #[cfg(windows)]
 async fn connect_stream(
     socket_path: &Path,
-) -> Result<(FramedRead<OwnedReadHalf, LinesCodec>, FramedWrite<OwnedWriteHalf, LinesCodec>)> {
-    // Convert the Path to a UTF-8 string:
-    let address_str = socket_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in the provided path"))?;
+) -> Result<(FramedRead<tokio::io::ReadHalf<NamedPipeClient>, LinesCodec>, FramedWrite<tokio::io::WriteHalf<NamedPipeClient>, LinesCodec>)> {
+    // Convert the Path to a UTF-8 string and prepend the named pipe prefix
+    let pipe_name = format!(r"\\.\pipe\{}", socket_path.to_str().unwrap_or_default());
 
-    info!("{address_str}");
-    let stream = TcpStream::connect("127.0.0.1:9000").await?;
-    let (read_half, write_half) = stream.into_split();
+    // Attempt to create the client
+    let client = ClientOptions::new()
+        .open(&pipe_name)?;
+
+    // Split the named pipe into read and write halves
+    let (read_half, write_half) = tokio::io::split(client);
+
+    // Create FramedRead and FramedWrite for line-based codec
     let reader = FramedRead::new(read_half, LinesCodec::new());
     let writer = FramedWrite::new(write_half, LinesCodec::new());
+
     Ok((reader, writer))
 }
 

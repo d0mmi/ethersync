@@ -100,8 +100,7 @@ impl EditorConnection {
 
         match message {
             EditorProtocolMessageFromEditor::Open { uri } => {
-                info!("Open: {uri}");
-                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
+                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -144,8 +143,7 @@ impl EditorConnection {
                 ))
             }
             EditorProtocolMessageFromEditor::Close { uri } => {
-                info!("Close: {uri}");
-                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
+                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -169,9 +167,7 @@ impl EditorConnection {
                     "Handling RevDelta from editor: revision {:#?}, delta {:#?}",
                     revision, delta
                 );
-                info!("Edit: {uri}");
-
-                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
+                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;
@@ -221,8 +217,7 @@ impl EditorConnection {
                 ))
             }
             EditorProtocolMessageFromEditor::Cursor { uri, ranges } => {
-                info!("Cursor: {uri}");
-                let uri = FileUri::try_from(uri.replace("%3A", ":").clone()).map_err(anyhow_err_to_protocol_err)?;
+                let uri = FileUri::try_from(uri.clone()).map_err(anyhow_err_to_protocol_err)?;
                 let absolute_path = uri.to_absolute_path();
                 let relative_path = RelativePath::try_from_absolute(&self.base_dir, &absolute_path)
                     .map_err(anyhow_err_to_protocol_err)?;

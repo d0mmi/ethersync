@@ -239,7 +239,7 @@ async function applyEdit(document: vscode.TextDocument, edit: Edit): Promise<boo
     for (const delta of edit.delta) {
         const range = ethersyncRangeToVSCodeRange(document, delta.range)
         let edit = new vscode.TextEdit(range, delta.replacement)
-        debug(`Edit applied to document ${decodeURI(document.uri.toString())}`)
+        debug(`Edit applied to document ${getDocumentUri(document)}`)
         edits.push(edit)
     }
     let workspaceEdit = new vscode.WorkspaceEdit()
@@ -257,7 +257,7 @@ async function applyEdit(document: vscode.TextDocument, edit: Edit): Promise<boo
 
 // TODO: check if belongs to project.
 async function processUserOpen(document: vscode.TextDocument) {
-    const fileUri = decodeURI(document.uri.toString())
+    const fileUri = getDocumentUri(document)
     debug("OPEN " + fileUri)
     connection
         .sendRequest(openType, {uri: fileUri})
@@ -269,6 +269,9 @@ async function processUserOpen(document: vscode.TextDocument) {
         .catch(() => {
             debug("OPEN rejected by daemon")
         })
+        
+        revisions[document.fileName] = new Revision()
+        updateContents(document)
 }
 
 function processUserClose(document: vscode.TextDocument) {
@@ -276,7 +279,7 @@ function processUserClose(document: vscode.TextDocument) {
         // File is not currently tracked in ethersync.
         return
     }
-    const fileUri = decodeURI(document.uri.toString())
+    const fileUri = getDocumentUri(document)
     connection.sendRequest(closeType, {uri: fileUri})
 
     delete revisions[document.fileName]
@@ -317,6 +320,7 @@ function isRemoteEdit(event: vscode.TextDocumentChangeEvent): boolean {
 // NOTE: We might get multiple events per document.version,
 // as the _state_ of the document might change (like isDirty).
 function processUserEdit(event: vscode.TextDocumentChangeEvent) {
+    console.log(revisions)
     if (!(event.document.fileName in revisions)) {
         // File is not currently tracked in Ethersync.
         return
@@ -375,7 +379,7 @@ function processSelection(event: vscode.TextEditorSelectionChangeEvent) {
         // File is not currently tracked in ethersync.
         return
     }
-    let uri = decodeURI(event.textEditor.document.uri.toString())
+    let uri = getDocumentUri(event.textEditor.document)
     let content = contents[event.textEditor.document.fileName]
     let ranges = event.selections.map((s) => {
         return vsCodeRangeToEthersyncRange(content, s)
@@ -394,7 +398,7 @@ function vsCodeChangeEventToEthersyncEdits(event: vscode.TextDocumentChangeEvent
 
     for (const change of event.contentChanges) {
         let delta = vsCodeChangeToEthersyncDelta(content, change)
-        let uri = decodeURI(document.uri.toString())
+        let uri = getDocumentUri(document)
         let theEdit: Edit = {uri, revision: revision.daemon, delta: [delta]}
         edits.push(theEdit)
     }
@@ -434,7 +438,7 @@ export function deactivate() {}
 
 function debug(text: string) {
     // Disabled because we don't need it right now.
-    // console.log(Date.now() - t0 + " " + text)
+    console.log(text)
 }
 
 function updateContents(document: vscode.TextDocument) {
@@ -442,4 +446,8 @@ function updateContents(document: vscode.TextDocument) {
     for (let line = 0; line < document.lineCount; line++) {
         contents[document.fileName][line] = document.lineAt(line).text
     }
+}
+
+function getDocumentUri(document: vscode.TextDocument){
+    return decodeURI(document.uri.toString()).replaceAll("%3A",":"); // todo replace only needed on windows?
 }

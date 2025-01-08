@@ -92,12 +92,10 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let directory = directory
+            let directory = directory // todo only change this for windows
                 .unwrap_or_else(|| {
                     std::env::current_dir().expect("Could not access current directory")
-                })
-                .canonicalize()
-                .expect("Could not access given directory");
+                });
             if !has_ethersync_directory(&directory) {
                 error!(
                     "No {}/ found in {} (create that directory to Ethersync-enable the project)",
