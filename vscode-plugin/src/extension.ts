@@ -203,7 +203,7 @@ function openCurrentTextDocuments() {
 }
 
 function documentForUri(uri: string): vscode.TextDocument | undefined {
-    let doc = vscode.workspace.textDocuments.find((doc) => getDocumentUri(doc) === cleanUriFormatting(uri));
+    let doc = vscode.workspace.textDocuments.find((doc) => getDocumentUri(doc).replaceAll("file:///","").replaceAll("file://","") === cleanUriFormatting(uri).replaceAll("file:///","").replaceAll("file://",""));
 
     return doc;
 }
