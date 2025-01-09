@@ -211,7 +211,7 @@ function documentForUri(uri: string): vscode.TextDocument | undefined {
 async function processEditFromDaemon(edit: Edit) {
     try {
         await mutex.runExclusive(async () => {
-            const filename = uriToFname(edit.uri)
+            const filename = cleanUriFormatting(uriToFname(edit.uri));
             let revision = revisions[filename]
             if (edit.revision !== revision.editor) {
                 debug(`Received edit for revision ${edit.revision} (!= ${revision.editor}), ignoring`)
@@ -248,7 +248,7 @@ async function processEditFromDaemon(edit: Edit) {
 }
 
 async function processCursorFromDaemon(cursor: CursorFromDaemon) {
-    let uri = cursor.uri
+    let uri = cleanUriFormatting(cursor.uri);
 
     const document = documentForUri(uri)
 
