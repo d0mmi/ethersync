@@ -18,8 +18,7 @@ impl AbsolutePath {
     }
 
     pub fn to_file_uri(&self) -> FileUri {
-        FileUri::try_from(format!("file:///{}", self.0.display())) // todo change for win and unix independently
-            .expect("Should be able to create File URI from absolute path")
+        FileUri::try_from(format!("file://{}", self.0.display())).expect("Should be able to create File URI from absolute path")
     }
 }
 
@@ -121,8 +120,6 @@ impl FileUri {
         let path = Path::new(&self.0[7..]);
         #[cfg(windows)]
         let path = Path::new(&self.0[8..]);
-        let test =path.to_str().unwrap();
-        info!("path: {test}");
         AbsolutePath::try_from(path.to_path_buf())
             .expect("File URI should contain an absolute path")
     }
@@ -132,10 +129,22 @@ impl TryFrom<String> for FileUri {
     type Error = anyhow::Error;
 
     fn try_from(string: String) -> Result<Self, Self::Error> {
-        if string.starts_with("file:///") {
-            Ok(Self(string.to_string()))
-        } else {
-            bail!("File URI '{}' does not start with 'file:///'", string);
+        #[cfg(target_os = "windows")]
+        {
+            let mut uri = string.replace("%3A", ":");
+            if uri.starts_with("file://") {
+                Ok(Self(uri.to_string()))
+            } else {
+                bail!("File URI '{}' does not start with 'file://'", uri);
+            }
+        }
+        #[cfg(target_os = "unix")]
+        {
+            if string.starts_with("file:///") {
+                Ok(Self(string.to_string()))
+            } else {
+                bail!("File URI '{}' does not start with 'file:///'", string);
+            }
         }
     }
 }

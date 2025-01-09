@@ -203,7 +203,9 @@ function openCurrentTextDocuments() {
 }
 
 function documentForUri(uri: string): vscode.TextDocument | undefined {
-    return vscode.workspace.textDocuments.find((doc) => decodeURI(doc.uri.toString()) === uri)
+    let doc = vscode.workspace.textDocuments.find((doc) => getDocumentUri(doc) === cleanUriFormatting(uri));
+
+    return doc;
 }
 
 async function processEditFromDaemon(edit: Edit) {
@@ -291,7 +293,7 @@ async function processUserOpen(document: vscode.TextDocument) {
     connection
         .sendRequest(openType, {uri: fileUri})
         .then(() => {
-            revisions[document.fileName] = new Revision()
+            revisions[getDocumentFileName(document)] = new Revision()
             updateContents(document)
             debug("Successfully opened. Tracking changes.")
         })
@@ -302,14 +304,14 @@ async function processUserOpen(document: vscode.TextDocument) {
 }
 
 function processUserClose(document: vscode.TextDocument) {
-    if (!(document.fileName in revisions)) {
+    if (!(getDocumentFileName(document) in revisions)) {
         // File is not currently tracked in ethersync.
         return
     }
     const fileUri = getDocumentUri(document)
     connection.sendRequest(closeType, {uri: fileUri})
 
-    delete revisions[document.fileName]
+    delete revisions[getDocumentFileName(document)]
 }
 
 function isTextEditsEqualToVSCodeContentChanges(
@@ -347,8 +349,7 @@ function isRemoteEdit(event: vscode.TextDocumentChangeEvent): boolean {
 // NOTE: We might get multiple events per document.version,
 // as the _state_ of the document might change (like isDirty).
 function processUserEdit(event: vscode.TextDocumentChangeEvent) {
-    console.log(revisions)
-    if (!(event.document.fileName in revisions)) {
+    if (!(getDocumentFileName(event.document) in revisions)) {
         // File is not currently tracked in Ethersync.
         return
     }
@@ -369,7 +370,7 @@ function processUserEdit(event: vscode.TextDocumentChangeEvent) {
                 return
             }
 
-            const filename = document.fileName
+            const filename = getDocumentFileName(document)
             if (!isEthersyncEnabled(path.dirname(filename))) {
                 return
             }
@@ -402,12 +403,12 @@ function processUserEdit(event: vscode.TextDocumentChangeEvent) {
 }
 
 function processSelection(event: vscode.TextEditorSelectionChangeEvent) {
-    if (!(event.textEditor.document.fileName in revisions)) {
+    if (!(getDocumentFileName(event.textEditor.document) in revisions)) {
         // File is not currently tracked in ethersync.
         return
     }
     let uri = getDocumentUri(event.textEditor.document)
-    let content = contents[event.textEditor.document.fileName]
+    let content = contents[getDocumentFileName(event.textEditor.document)]
     let ranges = event.selections.map((s) => {
         return vsCodeRangeToEthersyncRange(content, s)
     })
@@ -416,7 +417,7 @@ function processSelection(event: vscode.TextEditorSelectionChangeEvent) {
 
 function vsCodeChangeEventToEthersyncEdits(event: vscode.TextDocumentChangeEvent): Edit[] {
     let document = event.document
-    let filename = document.fileName
+    let filename = getDocumentFileName(document)
 
     let revision = revisions[filename]
 
@@ -469,12 +470,21 @@ function debug(text: string) {
 }
 
 function updateContents(document: vscode.TextDocument) {
-    contents[document.fileName] = new Array(document.lineCount)
+    let filename = getDocumentFileName(document)
+    contents[filename] = new Array(document.lineCount)
     for (let line = 0; line < document.lineCount; line++) {
-        contents[document.fileName][line] = document.lineAt(line).text
+        contents[filename][line] = document.lineAt(line).text
     }
 }
 
+function getDocumentFileName(document: vscode.TextDocument){
+    return cleanUriFormatting(document.fileName.toString());
+}
+
 function getDocumentUri(document: vscode.TextDocument){
-    return decodeURI(document.uri.toString()).replaceAll("%3A",":"); // todo replace only needed on windows?
+    return cleanUriFormatting(document.uri.toString());
+}
+
+function cleanUriFormatting(uri: string){
+    return decodeURI(uri).replaceAll("%3A",":").replaceAll("\\","/");
 }
