@@ -152,17 +152,47 @@ function connect() {
         vscode.window.showErrorMessage(`Failed to start ethersync client: ${err.message}`)
     })
 
-    ethersyncClient.on("exit", () => {
-        vscode.window.showErrorMessage("Connection to Ethersync daemon lost.")
-    })
+    ethersyncClient.on("message", (data) => {console.log(data.toString())});
+    ethersyncClient.on("data", (data) => {console.log(data.toString())});
+    ethersyncClient.stdout.on('data', function(data) {
+        //Here is where the output goes
+    
+        console.log('stdout: ' + data);
+        console.log('--------------');
+    });
+    
+    ethersyncClient.stderr.on('data', function(data) {
+        //Here is where the error output goes
+        console.log('stderr: ' + data);
+    });
+    
+    ethersyncClient.stdin.on('data', function(data) {
+        //Here is where the error output goes
+        console.log('stdin: ' + data);
+    });
+    const logger = {
+        error: (msg:any) => console.error(`[Error]: ${msg}`),
+        warn: (msg:any) => console.warn(`[Warning]: ${msg}`),
+        info: (msg:any) => console.info(`[Info]: ${msg}`),
+        log: (msg:any) => console.log(`[Log]: ${msg}`),
+    };
 
     connection = rpc.createMessageConnection(
         new rpc.StreamMessageReader(ethersyncClient.stdout),
         new rpc.StreamMessageWriter(ethersyncClient.stdin),
+        logger
     )
 
     connection.onNotification("edit", processEditFromDaemon)
     connection.onNotification("cursor", processCursorFromDaemon)
+
+    connection.onNotification((method, params) => {
+        console.log(`[Notification Received] Method: ${method}, Params: ${JSON.stringify(params)}`);
+    });
+
+    connection.onRequest((method, params) => {
+        console.log(`[Request Received] Method: ${method}, Params: ${JSON.stringify(params)}`);
+    });
 
     // Start the connection
     connection.listen()
@@ -258,7 +288,6 @@ async function applyEdit(document: vscode.TextDocument, edit: Edit): Promise<boo
 // TODO: check if belongs to project.
 async function processUserOpen(document: vscode.TextDocument) {
     const fileUri = getDocumentUri(document)
-    debug("OPEN " + fileUri)
     connection
         .sendRequest(openType, {uri: fileUri})
         .then(() => {
@@ -266,12 +295,10 @@ async function processUserOpen(document: vscode.TextDocument) {
             updateContents(document)
             debug("Successfully opened. Tracking changes.")
         })
-        .catch(() => {
-            debug("OPEN rejected by daemon")
+        .catch((error) => {
+            debug("OPEN rejected by daemon: ")
+            debug(error)
         })
-        
-        revisions[document.fileName] = new Revision()
-        updateContents(document)
 }
 
 function processUserClose(document: vscode.TextDocument) {

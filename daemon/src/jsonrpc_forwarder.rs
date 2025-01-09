@@ -22,6 +22,7 @@ use tokio::net::windows::named_pipe::NamedPipeServer; // todo maybe named pipe i
 use tokio::net::windows::named_pipe::NamedPipeClient;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
+use tokio::net::windows::named_pipe::PipeMode;
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodec};
 use tracing::info;
@@ -49,7 +50,6 @@ pub async fn connection(socket_path: &Path) -> Result<()> {
 
     // Main thread: read from stdin and write to the socket/TCP.
     while let Some(Ok(message)) = stdin.next().await {
-        info!("Sending message: {}", message);
         socket_write.send(message).await?;
     }
 
@@ -76,11 +76,11 @@ async fn connect_stream(
     socket_path: &Path,
 ) -> Result<(FramedRead<tokio::io::ReadHalf<NamedPipeClient>, LinesCodec>, FramedWrite<tokio::io::WriteHalf<NamedPipeClient>, LinesCodec>)> {
     // Convert the Path to a UTF-8 string and prepend the named pipe prefix
-    let pipe_name = format!(r"\\.\pipe\{}", socket_path.to_str().unwrap_or_default());
-
+    let pipe_name = format!(r"\\.\pipe\{}", socket_path.to_str().unwrap().split('\\').last().unwrap());
     // Attempt to create the client
-    let client = ClientOptions::new()
-        .open(&pipe_name)?;
+    let mut client_options = ClientOptions::new();
+    client_options.pipe_mode(PipeMode::Byte);
+    let client = client_options.open(&pipe_name)?;
 
     // Split the named pipe into read and write halves
     let (read_half, write_half) = tokio::io::split(client);

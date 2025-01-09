@@ -468,6 +468,7 @@ impl DocumentActor {
             .expect("Could not get editor handle");
 
         // todo fix extension never receives any callbacks
+        info!("Sending message to editor: {:?}", message);
         connection.1.send(message).await.unwrap_or_else(|err| {
             error!("Failed to send message to editor: {err} Removing editor.");
             self.editor_connections.remove(editor_id);

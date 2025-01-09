@@ -185,11 +185,14 @@ fn spawn_editor_connection(
 // Windows-specific imports and definitions
 // ------------------------------------------------------------------------------------
 #[cfg(windows)]
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::windows::named_pipe::NamedPipeServer;
+use tokio::net::windows::named_pipe::PipeMode;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ServerOptions;
 
 /// On Windows, EditorWriter = `FramedWrite<WriteHalf<TcpStream>>`.
 #[cfg(windows)]
-pub type EditorWriter = FramedWrite<WriteHalf<TcpStream>, EditorProtocolCodec>;
+pub type EditorWriter = FramedWrite<WriteHalf<NamedPipeServer>, EditorProtocolCodec>;
 
 /// On Windows, `get_socket_path` might just return something in %TEMP%.
 #[cfg(windows)]
@@ -210,14 +213,14 @@ pub async fn make_editor_connection(_socket_path: PathBuf, document_handle: Docu
     if let Err(description) = is_user_readable_only(&_socket_path) {
         panic!("{}", description);
     }
-
+    // todo remove all file related stuff
     // Also, we skip removing any file, but to keep the same shape:
     if sandbox::exists(Path::new("/"), &_socket_path).unwrap_or(false) {
         sandbox::remove_file(Path::new("/"), &_socket_path).ok();
     }
 
     // Call the inner function that returns `Result`.
-    let result = accept_editor_loop_win(document_handle).await;
+    let result = accept_editor_loop_win(_socket_path, document_handle).await;
     match result {
         Ok(()) => {}
         Err(err) => {
@@ -228,23 +231,32 @@ pub async fn make_editor_connection(_socket_path: PathBuf, document_handle: Docu
 
 /// **Inner** function on Windows that returns `Result<()>`, so we can use `?`.
 #[cfg(windows)]
-async fn accept_editor_loop_win(document_handle: DocumentActorHandle) -> std::io::Result<()> {
-    // Listen on TCP instead of a Unix socket
-    let listener = TcpListener::bind("127.0.0.1:9000").await?; // todo make no longer static
-    info!("Listening on 127.0.0.1:9000 (Windows) for editor connections");
-
+async fn accept_editor_loop_win(
+    socket_path: PathBuf,
+    document_handle: DocumentActorHandle,
+) -> std::io::Result<()> {
+    // Listen on Pipe instead of a Unix socket
+    let pipe_name = format!(
+        r"\\.\pipe\{}",
+        socket_path.to_str().unwrap().split('\\').last().unwrap()
+    );
     loop {
-        let (stream, addr) = listener.accept().await?;
-        info!("Accepted Windows editor connection from {addr}");
+        let mut server_options = ServerOptions::new();
+        server_options.pipe_mode(PipeMode::Byte);
+        let pipe: NamedPipeServer = server_options.create(&pipe_name)?;
+        info!("Client is connecting on named pipe: {}", pipe_name);
 
+        // Wait asynchronously for a client to connect
+        pipe.connect().await?;
+        info!("Client connected!");
         let id = document_handle.next_editor_id();
-        spawn_editor_connection_win(stream, document_handle.clone(), id);
+        spawn_editor_connection_win(pipe, document_handle.clone(), id);
     }
 }
 
 #[cfg(windows)]
 fn spawn_editor_connection_win(
-    stream: TcpStream,
+    stream: NamedPipeServer,
     document_handle: DocumentActorHandle,
     editor_id: EditorId,
 ) {
