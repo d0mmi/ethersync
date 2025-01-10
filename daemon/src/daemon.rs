@@ -1,5 +1,5 @@
 use crate::document::Document;
-use crate::editor::{self, EditorId, EditorWriter};
+use crate::editor::{Editor, EditorId, EditorWriter};
 use crate::editor_connection::EditorConnection;
 use crate::path::{AbsolutePath, RelativePath};
 use crate::peer;
@@ -746,7 +746,7 @@ impl Daemon {
     // Launch the daemon. Optionally, connect to given peer.
     pub fn new(
         peer_connection_info: peer::PeerConnectionInfo,
-        socket_path: &Path,
+        editor: Box<dyn Editor>,
         base_dir: &Path,
         init: bool,
     ) -> Self {
@@ -782,11 +782,8 @@ impl Daemon {
         }
 
         {
-            let socket_path = socket_path.to_path_buf();
             let document_handle = document_handle.clone();
-            tokio::spawn(async move {
-                editor::make_editor_connection(socket_path, document_handle).await;
-            });
+            editor.make_editor_connection(document_handle);
         }
 
         Self { document_handle }

@@ -1,41 +1,50 @@
-//! This module is all about daemon to editor communication.
-use crate::daemon::{DocMessage, DocumentActorHandle};
 use crate::sandbox;
-use crate::types::EditorProtocolObject;
 use anyhow::{bail, Context, Result};
+use std::fs;
+use std::io;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use futures::StreamExt;
-use std::{
-    fs, io,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
-use tokio::{
-    io::WriteHalf,
-    net::{UnixListener, UnixStream},
-};
-use tokio_util::{
-    bytes::BytesMut,
-    codec::{Encoder, FramedRead, FramedWrite, LinesCodec},
-};
+use tokio::net::{UnixListener, UnixStream};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::info;
+use crate::daemon::{DocMessage, DocumentActorHandle};
+use crate::editor::{Editor, EditorId, EditorProtocolCodec};
 
-pub type EditorId = usize;
+pub struct EditorUnix {
+  pub socket_name:PathBuf
+}
+impl Editor for EditorUnix {
+    fn get_socket_path(&self) -> PathBuf {
+        let socket_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| get_fallback_socket_dir());
+        let socket_dir = Path::new(&socket_dir);
+        if let Err(description) = is_valid_socket_name(&self.socket_name) {
+            panic!("{}", description);
+        }
+        socket_dir.join(&self.socket_name)
+    }
 
-pub type EditorWriter = FramedWrite<WriteHalf<UnixStream>, EditorProtocolCodec>;
+    /// # Panics
+    ///
+    /// Will panic if we fail to listen on the socket, or if we fail to accept an incoming connection.
+     fn make_editor_connection(&self, document_handle: DocumentActorHandle) {
+        // Make sure the parent directory of the socket is only accessible by the current user.
+        let socket_path = self.get_socket_path();
+        if let Err(description) = is_user_readable_only(Path::new(&socket_path)) {
+            panic!("{}", description);
+        }
 
-pub struct EditorProtocolCodec;
+        // Using the sandbox method here is technically unnecessary,
+        // but we want to really run all path operations through the sandbox module.
+        if sandbox::exists(Path::new("/"), Path::new(&socket_path))
+            .expect("Failed to check existence of path")
+        {
+            sandbox::remove_file(Path::new("/"), &socket_path).expect("Could not remove socket");
+        }
 
-impl Encoder<EditorProtocolObject> for EditorProtocolCodec {
-    type Error = anyhow::Error;
-
-    fn encode(
-        &mut self,
-        item: EditorProtocolObject,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        let payload = item.to_jsonrpc()?;
-        dst.extend_from_slice(format!("{payload}\n").as_bytes());
-        Ok(())
+        tokio::spawn(async move {
+            accept_editor_loop(&socket_path, document_handle).await.expect("Failed to make editor connection!");
+        });
     }
 }
 
@@ -54,6 +63,7 @@ fn get_fallback_socket_dir() -> String {
     socket_dir
 }
 
+
 fn is_valid_socket_name(socket_name: &Path) -> Result<()> {
     if socket_name.components().count() != 1 {
         bail!("The socket name must be a single path component");
@@ -70,14 +80,6 @@ fn is_valid_socket_name(socket_name: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn get_socket_path(socket_name: &Path) -> PathBuf {
-    let socket_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| get_fallback_socket_dir());
-    let socket_dir = Path::new(&socket_dir);
-    if let Err(description) = is_valid_socket_name(&socket_name) {
-        panic!("{}", description);
-    }
-    socket_dir.join(socket_name)
-}
 
 fn is_user_readable_only(socket_path: &Path) -> Result<()> {
     let parent_dir = socket_path
@@ -95,31 +97,6 @@ fn is_user_readable_only(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// # Panics
-///
-/// Will panic if we fail to listen on the socket, or if we fail to accept an incoming connection.
-pub async fn make_editor_connection(socket_path: PathBuf, document_handle: DocumentActorHandle) {
-    // Make sure the parent directory of the socket is only accessible by the current user.
-    if let Err(description) = is_user_readable_only(&socket_path) {
-        panic!("{}", description);
-    }
-
-    // Using the sandbox method here is technically unnecessary,
-    // but we want to really run all path operations through the sandbox module.
-    if sandbox::exists(Path::new("/"), Path::new(&socket_path))
-        .expect("Failed to check existence of path")
-    {
-        sandbox::remove_file(Path::new("/"), &socket_path).expect("Could not remove socket");
-    }
-
-    let result = accept_editor_loop(&socket_path, document_handle).await;
-    match result {
-        Ok(()) => {}
-        Err(err) => {
-            panic!("Failed to make editor connection: {err}");
-        }
-    }
-}
 
 async fn accept_editor_loop(
     socket_path: &Path,
@@ -136,6 +113,7 @@ async fn accept_editor_loop(
         spawn_editor_connection(stream, document_handle.clone(), id);
     }
 }
+
 
 fn spawn_editor_connection(
     stream: UnixStream,

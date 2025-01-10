@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{Result};
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser, Subcommand};
 use ethersync::peer::PeerConnectionInfo;
 use ethersync::{daemon::Daemon, editor, logging, sandbox};
 use std::path::{Path, PathBuf};
 use tokio::signal;
 use tracing::{error, info};
+use crate::jsonrpc_forwarder::JsonRPCForwarder;
 
 mod jsonrpc_forwarder;
 
@@ -75,7 +76,17 @@ async fn main() -> Result<()> {
 
     logging::initialize(cli.debug);
 
-    let socket_path = editor::get_socket_path(&cli.socket_name);
+    let editor: Box<dyn editor::Editor>;
+    #[cfg(windows)]
+    {
+        editor = Box::new(editor::windows::EditorWindows {});
+    }
+    #[cfg(unix)]
+    {
+        editor = Box::new(editor::unix::EditorUnix { socket_name: cli.socket_name });
+    }
+
+    let socket_path = editor.get_socket_path();
 
     match cli.command {
         Commands::Daemon {
@@ -92,12 +103,10 @@ async fn main() -> Result<()> {
                 );
             }
 
-            let directory = directory
-                .unwrap_or_else(|| {
-                    std::env::current_dir().expect("Could not access current directory")
-                })
-                .canonicalize()
-                .expect("Could not access given directory");
+            let directory = normalize_directory(directory.unwrap_or_else(|| {
+                std::env::current_dir().expect("Could not access current directory")
+            }));
+
             if !has_ethersync_directory(&directory) {
                 error!(
                     "No {}/ found in {} (create that directory to Ethersync-enable the project)",
@@ -124,7 +133,7 @@ async fn main() -> Result<()> {
             }
 
             info!("Starting Ethersync on {}", directory.display());
-            Daemon::new(peer_connection_info, &socket_path, &directory, init);
+            Daemon::new(peer_connection_info, editor, &directory, init);
             match signal::ctrl_c().await {
                 Ok(()) => {}
                 Err(err) => {
@@ -134,10 +143,38 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Client => {
-            jsonrpc_forwarder::connection(&socket_path)
-                .await
-                .context("JSON-RPC forwarder failed")?;
+            let forwarder;
+            #[cfg(windows)]
+            {
+                forwarder = jsonrpc_forwarder::windows::WindowsJsonRPCForwarder { pipe_name: socket_path };
+            }
+            #[cfg(unix)]
+            {
+                forwarder = jsonrpc_forwarder::unix::UnixJsonRPCForwarder { socket_path: socket_path };
+            }
+
+            forwarder.connection().await;
         }
     }
     Ok(())
+}
+
+fn normalize_directory(directory: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let directory_str = directory.to_string_lossy();
+        if directory_str.len() > 2 && directory_str.chars().nth(1) == Some(':') {
+            let (drive_letter, rest) = directory_str.split_at(1);
+            let lower_drive = drive_letter.to_lowercase();
+            let path_with_forward_slashes = rest.replace('\\', "/");
+            return PathBuf::from(format!("{}{}", lower_drive, path_with_forward_slashes));
+        }
+        directory
+    }
+    #[cfg(unix)]
+    {
+        return directory
+            .canonicalize()
+            .expect("Could not access given directory");
+    }
 }
