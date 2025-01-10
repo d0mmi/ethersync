@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <!--This is the file that defines the IDs for all the commands exposed by VisualStudio. -->
+  <Extern href="stdidcmd.h"/>
+
+  <!--This header contains the command ids for the menus provided by the shell. -->
+  <Extern href="vsshlids.h"/>
+
+  <!--The Commands section is where commands, menus, and menu groups are defined.
+      This section uses a Guid to identify the package that provides the command defined inside it. -->
+  <Commands package="guidvisualstudio_pluginPackage">
+    <Groups>
+      <Group guid="guidvisualstudio_pluginPackageCmdSet" id="EtherSyncMenuGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS"/>
+      </Group>
+    </Groups>
+    
+    <Buttons>
+      <Button guid="guidvisualstudio_pluginPackageCmdSet" id="ConnectToDaemonId" priority="0x0100" type="Button">
+        <Parent guid="guidvisualstudio_pluginPackageCmdSet" id="EtherSyncMenuGroup" />
+        <Strings>
+          <ButtonText>Connect to the Ethersync Daemon</ButtonText>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <Symbols>
+    <!-- This is the package guid. -->
+    <GuidSymbol name="guidvisualstudio_pluginPackage" value="{50d1fe5a-9b0e-412c-9b32-5d14208867f1}" />
+
+    <!-- This is the guid used to group the menu commands together -->
+    <GuidSymbol name="guidvisualstudio_pluginPackageCmdSet" value="{25afa86c-31bd-4bfd-8ed2-da75c0cb4b3a}">
+      <IDSymbol name="EtherSyncMenuGroup" value="0x1020" />
+      <IDSymbol name="ConnectToDaemonId" value="0x0100" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>
