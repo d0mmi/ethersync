@@ -1,10 +1,18 @@
-﻿using System.Diagnostics;
+﻿using StreamJsonRpc;
+using System.Diagnostics;
 
-namespace visualstudio_plugin.src
+namespace ethersync.src
 {
-    internal class EtherSyncClientWrapper
+    public class EtherSyncClientWrapper
     {
         private Process ethersyncClient;
+        private JsonRpc rpc;
+        private NotificationHandler notificationHandler;
+
+        public EtherSyncClientWrapper()
+        {
+
+        }
 
 
         public void  StartClient()
@@ -15,9 +23,9 @@ namespace visualstudio_plugin.src
                 FileName = "ethersync",
                 Arguments = "client",
                 RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                RedirectStandardInput = true,
                 UseShellExecute = false,
-                CreateNoWindow = true // set false to have console window of client
+                CreateNoWindow = true
             };
 
             ethersyncClient = new Process
@@ -26,11 +34,19 @@ namespace visualstudio_plugin.src
             };
 
             ethersyncClient.Start();
+
+            notificationHandler = new NotificationHandler();
+            rpc = JsonRpc.Attach(ethersyncClient.StandardInput.BaseStream, ethersyncClient.StandardOutput.BaseStream, notificationHandler);
+            //rpc.TraceSource.Switch.Level = SourceLevels.All; adds debug information to the console
+            //rpc.TraceSource.Listeners.Add(new ConsoleTraceListener());
         }
 
         public void StopClient()
         {
+            rpc.Dispose();
+            rpc = null;
             ethersyncClient.Close();
+            ethersyncClient = null;
         }
     }
 }

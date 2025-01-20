@@ -1,10 +1,13 @@
-﻿using Microsoft.VisualStudio.Shell;
+﻿using ethersync.src;
+using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Task = System.Threading.Tasks.Task;
 
-namespace visualstudio_plugin
+namespace ethersync
 {
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(visualstudio_pluginPackage.PackageGuidString)]
@@ -13,6 +16,8 @@ namespace visualstudio_plugin
     {
 
         public const string PackageGuidString = "50d1fe5a-9b0e-412c-9b32-5d14208867f1";
+        private DocumentEventsListener _documentEventsListener;
+        private uint _shellPropertyCookie;
 
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {

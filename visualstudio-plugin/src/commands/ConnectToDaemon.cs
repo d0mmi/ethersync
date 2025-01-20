@@ -1,18 +1,18 @@
-﻿using Microsoft.VisualStudio.Shell;
+﻿using ethersync.src;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.ComponentModel.Design;
-using System.Globalization;
-using visualstudio_plugin.src;
 using Task = System.Threading.Tasks.Task;
 
-namespace visualstudio_plugin
+namespace ethersync
 {
     internal sealed class ConnectToDaemon
     {
         public const int CommandId = 0x0100;
         public static readonly Guid CommandSet = new Guid("25afa86c-31bd-4bfd-8ed2-da75c0cb4b3a");
         private readonly AsyncPackage package;
+        private DocumentEventsListener _documentEventsListener;
 
         private ConnectToDaemon(AsyncPackage package, OleMenuCommandService commandService)
         {
@@ -53,11 +53,12 @@ namespace visualstudio_plugin
             ThreadHelper.ThrowIfNotOnUIThread();
 
 
+            _documentEventsListener = new DocumentEventsListener();
             new EtherSyncClientWrapper().StartClient();
 
 
-            string message = string.Format(CultureInfo.CurrentCulture, "Inside {0}.MenuItemCallback()", this.GetType().FullName);
-            string title = "ConnectToDaemon";
+            string message = "Connecting to ethersync daemon..";
+            string title = "Connect to Daemon";
 
             // Show a message box to prove we were here
             VsShellUtilities.ShowMessageBox(
