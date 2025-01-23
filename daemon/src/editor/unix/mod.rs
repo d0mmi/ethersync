@@ -1,11 +1,10 @@
 use crate::sandbox;
-use anyhow::{bail, Context};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use futures::StreamExt;
-use tokio::io::WriteHalf;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::info;
@@ -13,7 +12,7 @@ use crate::daemon::{DocMessage, DocumentActorHandle};
 use crate::editor::{Editor, EditorId, EditorProtocolCodec};
 
 pub struct EditorUnix {
-  pub socket_name:Path
+  pub socket_name:PathBuf
 }
 impl Editor for EditorUnix {
     fn get_socket_path(&self) -> PathBuf {
@@ -28,27 +27,24 @@ impl Editor for EditorUnix {
     /// # Panics
     ///
     /// Will panic if we fail to listen on the socket, or if we fail to accept an incoming connection.
-    async fn make_editor_connection(&self, document_handle: DocumentActorHandle) {
+     fn make_editor_connection(&self, document_handle: DocumentActorHandle) {
         // Make sure the parent directory of the socket is only accessible by the current user.
-        if let Err(description) = is_user_readable_only(&self.socket_name) {
+        let socket_path = self.get_socket_path();
+        if let Err(description) = is_user_readable_only(Path::new(&socket_path)) {
             panic!("{}", description);
         }
 
         // Using the sandbox method here is technically unnecessary,
         // but we want to really run all path operations through the sandbox module.
-        if sandbox::exists(Path::new("/"), Path::new(&self.socket_name))
+        if sandbox::exists(Path::new("/"), Path::new(&socket_path))
             .expect("Failed to check existence of path")
         {
-            sandbox::remove_file(Path::new("/"), &self.socket_name).expect("Could not remove socket");
+            sandbox::remove_file(Path::new("/"), &socket_path).expect("Could not remove socket");
         }
 
-        let result = accept_editor_loop(&self.socket_name, document_handle).await;
-        match result {
-            Ok(()) => {}
-            Err(err) => {
-                panic!("Failed to make editor connection: {err}");
-            }
-        }
+        tokio::spawn(async move {
+            accept_editor_loop(&socket_path, document_handle).await.expect("Failed to make editor connection!");
+        });
     }
 }
 

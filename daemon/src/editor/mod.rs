@@ -9,7 +9,10 @@ use std::{
     path::{PathBuf},
 };
 use tokio::io::{WriteHalf};
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeServer;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio_util::{
     bytes::BytesMut,
     codec::Encoder,

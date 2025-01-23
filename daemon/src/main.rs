@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     }
     #[cfg(unix)]
     {
-        editor = Box::new(editor::unix::EditorUnix { socket_name: &cli.socket_name });
+        editor = Box::new(editor::unix::EditorUnix { socket_name: cli.socket_name });
     }
 
     let socket_path = editor.get_socket_path();
