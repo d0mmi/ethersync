@@ -75,7 +75,17 @@ async fn main() -> Result<()> {
 
     logging::initialize(cli.debug);
 
-    let socket_path = editor::get_socket_path(&cli.socket_name);
+    let editor: Box<dyn editor::Editor>;
+    #[cfg(windows)]
+    {
+        editor = Box::new(editor::windows::EditorWindows {});
+    }
+    #[cfg(unix)]
+    {
+        editor = Box::new(editor::unix::EditorUnix { socket_name: &cli.socket_name });
+    }
+
+    let socket_path = editor.get_socket_path();
 
     match cli.command {
         Commands::Daemon {
@@ -122,7 +132,7 @@ async fn main() -> Result<()> {
             }
 
             info!("Starting Ethersync on {}", directory.display());
-            Daemon::new(peer_connection_info, &socket_path, &directory, init);
+            Daemon::new(peer_connection_info, editor, &directory, init);
             match signal::ctrl_c().await {
                 Ok(()) => {}
                 Err(err) => {
