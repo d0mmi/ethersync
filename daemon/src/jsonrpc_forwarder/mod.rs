@@ -8,87 +8,51 @@
 //! - takes jsonrpc from a socket (usually a daemon) and wraps it content-length encoded data to stdout
 //! - takes content-length encoded data from stdin (as sent by an LSP client) and writes it
 //!   "unpacked" to the socket
-use futures::{SinkExt, StreamExt};
-use std::path::Path;
-use tokio::io::{BufReader, BufWriter};
-#[cfg(unix)]
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient, PipeMode};
+pub mod windows;
 #[cfg(unix)]
-use tokio::net::UnixStream;
+pub mod unix;
+
+use async_trait::async_trait;
+use futures::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, BufWriter};
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodec};
 
-pub async fn connection(socket_path: &Path) -> anyhow::Result<()> {
-    // On Unix, connect to the Unix domain socket. On Windows, connect with pipes.
-    let (mut socket_read, mut socket_write) = connect_stream(socket_path).await?;
-    // Construct stdin/stdout objects, which send/receive messages with a Content-Length header.
-    let mut stdin = FramedRead::new(BufReader::new(tokio::io::stdin()), ContentLengthCodec);
-    let mut stdout = FramedWrite::new(BufWriter::new(tokio::io::stdout()), ContentLengthCodec);
 
-    // Spawn a task that reads from the socket and forwards to stdout.
-    tokio::spawn(async move {
-        while let Some(Ok(message)) = socket_read.next().await {
-            stdout
-                .send(message)
-                .await
-                .expect("Failed to write to stdout");
+#[async_trait(?Send)]
+pub trait JsonRPCForwarder<R: AsyncRead  + Unpin + Send + 'static, W : AsyncWrite + Unpin> {
+    async fn connect_stream(&self) -> anyhow::Result<(FramedRead<R, LinesCodec>, FramedWrite<W, LinesCodec>)>;
+
+    async fn connection(&self) {
+        // On Unix, connect to the Unix domain socket. On Windows, connect with pipes.
+        let stream = self.connect_stream().await.unwrap();
+        let mut socket_read = stream.0;
+        let mut socket_write = stream.1;
+        // Construct stdin/stdout objects, which send/receive messages with a Content-Length header.
+        let mut stdin = FramedRead::new(BufReader::new(tokio::io::stdin()), ContentLengthCodec);
+        let mut stdout = FramedWrite::new(BufWriter::new(tokio::io::stdout()), ContentLengthCodec);
+
+        // Spawn a task that reads from the socket and forwards to stdout.
+        tokio::spawn(async move {
+            while let Some(Ok(message)) = socket_read.next().await {
+                stdout
+                    .send(message)
+                    .await
+                    .expect("Failed to write to stdout");
+            }
+            // Socket / pipe was closed.
+            std::process::exit(0);
+        });
+
+        // Main thread: read from stdin and write to the socket/pipe.
+        while let Some(Ok(message)) = stdin.next().await {
+            socket_write.send(message).await.expect("Could not send message to socket");
         }
-        // Socket / pipe was closed.
+        // Stdin was closed.
         std::process::exit(0);
-    });
-
-    // Main thread: read from stdin and write to the socket/pipe.
-    while let Some(Ok(message)) = stdin.next().await {
-        socket_write.send(message).await?;
     }
-    // Stdin was closed.
-    std::process::exit(0);
-}
-
-/// On Unix connect to the socket and return framed `LinesCodec` readers/writers.
-#[cfg(unix)]
-async fn connect_stream(
-    socket_path: &Path,
-) -> anyhow::Result<(
-    FramedRead<OwnedReadHalf, LinesCodec>,
-    FramedWrite<OwnedWriteHalf, LinesCodec>,
-)> {
-    // Unix domain socket approach
-    let stream = UnixStream::connect(socket_path).await?;
-    let (read_half, write_half) = stream.into_split();
-    let reader = FramedRead::new(read_half, LinesCodec::new());
-    let writer = FramedWrite::new(write_half, LinesCodec::new());
-    Ok((reader, writer))
-}
-
-/// On Windows connect to the pipe and return framed `LinesCodec` readers/writers.
-#[cfg(windows)]
-async fn connect_stream(
-    socket_path: &Path,
-) -> anyhow::Result<(
-    FramedRead<tokio::io::ReadHalf<NamedPipeClient>, LinesCodec>,
-    FramedWrite<tokio::io::WriteHalf<NamedPipeClient>, LinesCodec>,
-)> {
-    // Convert the Path to a UTF-8 string and prepend the named pipe prefix
-    let pipe_name = format!(
-        r"\\.\pipe\{}",
-        socket_path.to_str().unwrap().split('\\').last().unwrap()
-    );
-    // Attempt to create the client
-    let mut client_options = ClientOptions::new();
-    client_options.pipe_mode(PipeMode::Byte);
-    let client = client_options.open(&pipe_name)?;
-
-    // Split the named pipe into read and write halves
-    let (read_half, write_half) = tokio::io::split(client);
-
-    // Create FramedRead and FramedWrite for line-based codec
-    let reader = FramedRead::new(read_half, LinesCodec::new());
-    let writer = FramedWrite::new(write_half, LinesCodec::new());
-
-    Ok((reader, writer))
 }
 
 struct ContentLengthCodec;
@@ -137,7 +101,7 @@ impl Decoder for ContentLengthCodec {
         let content_length = std::str::from_utf8(
             &src[start_of_header + c.len()..start_of_header + c.len() + end_of_line],
         )?
-        .parse()?;
+            .parse()?;
         let content_start = start_of_header + c.len() + end_of_line + end_of_line_bytes;
 
         // Recommended optimization, in anticipation for future calls to `decode`.

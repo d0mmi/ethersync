@@ -6,9 +6,9 @@ use tokio_util::{codec::{FramedRead, FramedWrite, LinesCodec}};
 use tracing::info;
 use crate::daemon::{DocMessage, DocumentActorHandle};
 use crate::editor::{Editor, EditorId, EditorProtocolCodec, EditorWriter};
-pub struct EditorWindows {
 
-}
+pub struct EditorWindows;
+
 impl Editor for EditorWindows {
     fn get_socket_path(&self) -> PathBuf {
         PathBuf::from("ethersync_pipe")

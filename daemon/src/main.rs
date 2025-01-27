@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{Result};
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser, Subcommand};
 use ethersync::peer::PeerConnectionInfo;
 use ethersync::{daemon::Daemon, editor, logging, sandbox};
 use std::path::{Path, PathBuf};
 use tokio::signal;
 use tracing::{error, info};
+use crate::jsonrpc_forwarder::JsonRPCForwarder;
 
 mod jsonrpc_forwarder;
 
@@ -142,9 +143,17 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Client => {
-            jsonrpc_forwarder::connection(&socket_path)
-                .await
-                .context("JSON-RPC forwarder failed")?;
+            let forwarder;
+            #[cfg(windows)]
+            {
+                forwarder = jsonrpc_forwarder::windows::WindowsJsonRPCForwarder { pipe_name: socket_path };
+            }
+            #[cfg(unix)]
+            {
+                forwarder = jsonrpc_forwarder::unix::UnixJsonRPCForwarder { socket_path: socket_path };
+            }
+
+            forwarder.connection().await;
         }
     }
     Ok(())
