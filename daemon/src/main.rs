@@ -5,15 +5,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use ethersync::{
-    cli::ask,
-    config::{self, AppConfig},
-    daemon::Daemon,
-    logging, sandbox,
-};
+use ethersync::{cli::ask, config::{self, AppConfig}, daemon::Daemon, editor, logging, sandbox};
 use std::path::{Path, PathBuf};
 use tokio::signal;
 use tracing::{debug, info, warn};
+use crate::jsonrpc_forwarder::JsonRPCForwarder;
 
 mod jsonrpc_forwarder;
 
@@ -83,6 +79,15 @@ async fn main() -> Result<()> {
     let socket_path = directory
         .join(config::CONFIG_DIR)
         .join(config::DEFAULT_SOCKET_NAME);
+    let editor: Box<dyn editor::Editor>;
+    #[cfg(windows)]
+    {
+        editor = Box::new(editor::windows::EditorWindows { pipe_name: socket_path.clone() });
+    }
+    #[cfg(unix)]
+    {
+        editor = Box::new(editor::unix::EditorUnix { socket_name: cli.socket_name });
+    }
 
     match cli.command {
         Commands::Share { .. } | Commands::Join { .. } => {
@@ -143,15 +148,23 @@ async fn main() -> Result<()> {
             }
 
             debug!("Starting Ethersync on {}.", directory.display());
-            let _daemon = Daemon::new(app_config, &socket_path, &directory, init_doc, persist)
+            let _daemon = Daemon::new(app_config, editor, &directory, init_doc, persist)
                 .await
                 .context("Failed to launch the daemon")?;
             wait_for_shutdown().await;
         }
         Commands::Client => {
-            jsonrpc_forwarder::connection(&socket_path)
-                .await
-                .context("JSON-RPC forwarder failed")?;
+            let forwarder;
+            #[cfg(windows)]
+            {
+                forwarder = jsonrpc_forwarder::windows::WindowsJsonRPCForwarder { };
+            }
+            #[cfg(unix)]
+            {
+                forwarder = jsonrpc_forwarder::unix::UnixJsonRPCForwarder { };
+            }
+
+            forwarder.connection(&socket_path).await.expect("JSON-RPC forwarder failed");
         }
     }
     Ok(())
@@ -183,15 +196,48 @@ fn get_directory(directory: Option<PathBuf>) -> Result<PathBuf> {
     Ok(directory)
 }
 
-async fn wait_for_shutdown() {
-    let mut signal_terminate = signal::unix::signal(signal::unix::SignalKind::terminate())
-        .expect("Should have been able to create terminate signal stream");
+#[cfg(unix)]
+pub async fn wait_for_shutdown() {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut sigterm =
+        signal(SignalKind::terminate()).expect("failed to create SIGTERM stream");
+
     tokio::select! {
         _ = signal::ctrl_c() => {
             debug!("Got SIGINT (Ctrl+C), shutting down");
         }
-        _ = signal_terminate.recv() => {
+        _ = sigterm.recv() => {
             debug!("Got SIGTERM, shutting down");
+        }
+    }
+}
+
+#[cfg(windows)]
+pub async fn wait_for_shutdown() {
+    use tokio::signal::windows::{ctrl_break, ctrl_close, ctrl_logoff, ctrl_shutdown};
+
+    // These constructors return io::Result<...>. Build the streams first, then await .recv().
+    let mut brk  = ctrl_break().expect("failed to create CTRL_BREAK handler");
+    let mut clos = ctrl_close().expect("failed to create CTRL_CLOSE handler");
+    let mut logf = ctrl_logoff().expect("failed to create CTRL_LOGOFF handler");
+    let mut shdn = ctrl_shutdown().expect("failed to create CTRL_SHUTDOWN handler");
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            debug!("Got CTRL+C, shutting down");
+        }
+        _ = brk.recv() => {
+            debug!("Got CTRL_BREAK, shutting down");
+        }
+        _ = clos.recv() => {
+            debug!("Got CTRL_CLOSE, shutting down");
+        }
+        _ = logf.recv() => {
+            debug!("Got CTRL_LOGOFF, shutting down");
+        }
+        _ = shdn.recv() => {
+            debug!("Got CTRL_SHUTDOWN, shutting down");
         }
     }
 }
