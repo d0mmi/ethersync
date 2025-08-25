@@ -171,10 +171,8 @@ async fn main() -> Result<()> {
 }
 
 fn get_directory(directory: Option<PathBuf>) -> Result<PathBuf> {
-    let directory = directory
-        .unwrap_or_else(|| std::env::current_dir().expect("Could not access current directory"))
-        .canonicalize()
-        .expect("Could not access given directory");
+    let directory = normalize_directory(directory
+        .unwrap_or_else(|| std::env::current_dir().expect("Could not access current directory")));
     if !has_ethersync_directory(&directory) {
         let ethersync_dir = directory.join(config::CONFIG_DIR);
 
@@ -238,5 +236,26 @@ pub async fn wait_for_shutdown() {
         _ = shdn.recv() => {
             debug!("Got CTRL_SHUTDOWN, shutting down");
         }
+    }
+}
+
+fn normalize_directory(directory: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let directory_str = directory.to_string_lossy();
+        if directory_str.len() > 2 && directory_str.chars().nth(1) == Some(':') {
+            let (drive_letter, rest) = directory_str.split_at(1);
+            let lower_drive = drive_letter.to_lowercase();
+            let path_with_forward_slashes = rest.replace('\\', "/");
+            return PathBuf::from(format!("{}{}", lower_drive, path_with_forward_slashes));
+        }
+        directory
+    }
+
+    #[cfg(unix)]
+    {
+        return directory
+            .canonicalize()
+            .expect("Could not access given directory");
     }
 }
