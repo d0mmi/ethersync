@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     }
     #[cfg(unix)]
     {
-        editor = Box::new(editor::unix::EditorUnix { socket_name: cli.socket_name });
+        editor = Box::new(editor::unix::EditorUnix { socket_path: socket_path.clone() });
     }
 
     match cli.command {
@@ -217,7 +217,6 @@ pub async fn wait_for_shutdown() {
 pub async fn wait_for_shutdown() {
     use tokio::signal::windows::{ctrl_break, ctrl_close, ctrl_logoff, ctrl_shutdown};
 
-    // These constructors return io::Result<...>. Build the streams first, then await .recv().
     let mut brk  = ctrl_break().expect("failed to create CTRL_BREAK handler");
     let mut clos = ctrl_close().expect("failed to create CTRL_CLOSE handler");
     let mut logf = ctrl_logoff().expect("failed to create CTRL_LOGOFF handler");

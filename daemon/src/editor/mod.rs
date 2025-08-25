@@ -4,32 +4,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! This module is all about daemon to editor communication.
-#[cfg(windows)]
-pub mod windows;
 #[cfg(unix)]
 pub mod unix;
+#[cfg(windows)]
+pub mod windows;
 
 use crate::daemon::{DocMessage, DocumentActorHandle};
 use crate::types::EditorProtocolObject;
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-use futures::StreamExt;
-use tokio::{
-    io::WriteHalf,
-};
+use tokio::io::WriteHalf;
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeServer;
+#[cfg(unix)]
+use tokio::net::UnixStream;
+use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::{
     bytes::BytesMut,
     codec::{Encoder, FramedWrite},
 };
-use tokio_util::codec::{FramedRead, LinesCodec};
 use tracing::info;
 
 pub type EditorId = usize;
-
 
 #[cfg(windows)]
 pub type EditorWriter = FramedWrite<WriteHalf<NamedPipeServer>, EditorProtocolCodec>;
@@ -59,14 +59,14 @@ impl Encoder<EditorProtocolObject> for EditorProtocolCodec {
 
 pub trait Editor {
     fn get_socket_path(&self) -> PathBuf;
-    fn spawn_socket_listener(
-        &self,
-        document_handle: DocumentActorHandle,
-    ) -> Result<()>;
+    fn spawn_socket_listener(&self, document_handle: DocumentActorHandle) -> Result<()>;
 }
 
-
-async fn handle_editor_connection(stream: EditorStream, document_handle: DocumentActorHandle, editor_id: EditorId) {
+async fn handle_editor_connection(
+    stream: EditorStream,
+    document_handle: DocumentActorHandle,
+    editor_id: EditorId,
+) {
     let (stream_read, stream_write) = tokio::io::split(stream);
     let mut reader = FramedRead::new(stream_read, LinesCodec::new());
     let writer = FramedWrite::new(stream_write, EditorProtocolCodec);

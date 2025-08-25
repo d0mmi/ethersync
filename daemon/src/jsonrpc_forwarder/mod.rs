@@ -14,25 +14,28 @@
 //! - takes content-length encoded data from stdin (as sent by an LSP client) and writes it
 //!   "unpacked" to the socket
 
-
-#[cfg(windows)]
-pub mod windows;
 #[cfg(unix)]
 pub mod unix;
+#[cfg(windows)]
+pub mod windows;
 
-use tokio::io::{AsyncRead, AsyncWrite, BufReader, BufWriter};
-use std::path::Path;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
+use std::path::Path;
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, BufWriter};
 use tokio_util::bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite, LinesCodec};
 
 #[async_trait(?Send)]
 pub trait JsonRPCForwarder<
     R: AsyncRead + Unpin + Send + 'static,
-    W: AsyncWrite + Unpin + Send + 'static> {
-
-    async fn connect_stream(&self, socket_path: &Path) -> anyhow::Result<(FramedRead<R, LinesCodec>, FramedWrite<W, LinesCodec>)>;
+    W: AsyncWrite + Unpin + Send + 'static,
+>
+{
+    async fn connect_stream(
+        &self,
+        socket_path: &Path,
+    ) -> anyhow::Result<(FramedRead<R, LinesCodec>, FramedWrite<W, LinesCodec>)>;
     async fn connection(&self, socket_path: &Path) -> anyhow::Result<()> {
         // Construct socket object, which send/receive newline-delimited messages.
         let stream = self.connect_stream(socket_path).await?;
@@ -61,7 +64,6 @@ pub trait JsonRPCForwarder<
         std::process::exit(0);
     }
 }
-
 
 struct ContentLengthCodec;
 
@@ -109,7 +111,7 @@ impl Decoder for ContentLengthCodec {
         let content_length = std::str::from_utf8(
             &src[start_of_header + c.len()..start_of_header + c.len() + end_of_line],
         )?
-            .parse()?;
+        .parse()?;
         let content_start = start_of_header + c.len() + end_of_line + end_of_line_bytes;
 
         // Recommended optimization, in anticipation for future calls to `decode`.
