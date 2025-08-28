@@ -205,7 +205,7 @@ async function processEditFromDaemon(edit: Edit) {
                     revision.daemon += 1
                     // Attempt auto-save to avoid the situation where one user closes a modified
                     // document without saving, which will cause VS Code to undo the dirty changes.
-                    document.save()
+                    //document.save()
                 } else {
                     debug("rejected an applyEdit, sending empty delta")
                     let theEdit: Edit = {uri: cleanUriFormatting(edit.uri), revision: revision.daemon, delta: []}
@@ -305,8 +305,8 @@ function processUserClose(document: vscode.TextDocument) {
         // File is not currently tracked in ethersync.
         return
     }
+    document.save()
     const fileUri = getDocumentUri(document)
-
     debug(`Sending close to daemon: ${JSON.stringify(fileUri)}`)
     connection.sendRequest(closeType, {uri: fileUri})
 
@@ -396,7 +396,7 @@ function processUserEdit(event: vscode.TextDocumentChangeEvent) {
 
             // Attempt auto-save to avoid the situation where one user closes a modified
             // document without saving, which will cause VS Code to undo the dirty changes.
-            document.save()
+            //document.save()
         })
         .catch((e: Error) => {
             vscode.window.showErrorMessage(`Error while sending edit to Ethersync daemon: ${e}`)
