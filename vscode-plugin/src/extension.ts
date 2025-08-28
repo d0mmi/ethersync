@@ -221,7 +221,7 @@ async function processEditFromDaemon(edit: Edit) {
                     document.save()
                 } else {
                     debug("rejected an applyEdit, sending empty delta")
-                    let theEdit: Edit = {uri: filename, revision: revision.daemon, delta: []}
+                    let theEdit: Edit = {uri: edit.uri, revision: revision.daemon, delta: []}
                     connection.sendRequest(editType, theEdit)
                     revision.editor += 1
                 }
