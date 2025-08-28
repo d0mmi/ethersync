@@ -494,16 +494,17 @@ export function cleanUriFormatting(uri: string){
 }
 
 export function uriToFname(uri: string, clean: boolean = false): string {
-    let prefix = "file:///"
-    if (uri.startsWith(prefix)) {
-        return uri.slice(prefix.length)
+    let result;
+    if (uri.startsWith("file:///")) {
+        result = uri.slice(8);
+    } else if (uri.startsWith("file://")) {
+        result = uri.slice(7);
+    } else {
+        result = uri;
     }
-    prefix = "file://"
-    if (uri.startsWith(prefix)) {
-        return uri.slice(prefix.length)
+    if (clean) {
+        result = cleanUriFormatting(result);
     }
-    debug(`expected URI prefix for '${uri}'`)
-    let result = clean? cleanUriFormatting(uri) : uri
     debug(`uriToFname uri: '${uri}' result:'${result}'`)
-    return result
+    return result;
 }
