@@ -123,10 +123,16 @@ pub struct FileUri(String);
 
 impl FileUri {
     pub fn to_absolute_path(&self) -> AbsolutePath {
-        #[cfg(unix)]
-        let path = Path::new(&self.0[7..]);
-        #[cfg(windows)]
-        let path = Path::new(&self.0[8..]);
+        let uri = &self.0;
+        let path;
+        if(uri.starts_with("file:///")) {
+            path = Path::new(&self.0[8..]);
+        }
+        else if(uri.starts_with("file://")) {
+            path = Path::new(&self.0[7..]);
+        }else{
+            path = Path::new(&self.0);
+        }
         AbsolutePath::try_from(path.to_path_buf())
             .expect("File URI should contain an absolute path")
     }
@@ -137,22 +143,19 @@ impl TryFrom<String> for FileUri {
 
     fn try_from(string: String) -> Result<Self, Self::Error> {
         let uri;
-        let file_prefix;
         #[cfg(unix)]
         {
-            file_prefix = "file:///";
             uri = string;
         }
         #[cfg(windows)]
         {
-            file_prefix = "file://";
-            uri = string.replace("%3A", ":");
+            uri = string.replace("%3A", ":"); // todo maybe just always replace this then we dont need the scope
         }
 
-        if uri.starts_with(file_prefix) {
+        if uri.starts_with("file://") || uri.starts_with("file:///") {
             Ok(Self(uri.to_string()))
         } else {
-            bail!("File URI '{}' does not start with '{}'", uri, file_prefix);
+            bail!("File URI '{}' does not start with 'file://' || 'file:///'", uri);
         }
     }
 }
