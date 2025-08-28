@@ -189,7 +189,8 @@ function openCurrentTextDocuments() {
 }
 
 function documentForUri(uri: string): vscode.TextDocument | undefined {
-    return vscode.workspace.textDocuments.find((doc) => uriToFname(getDocumentUri(doc)) === uriToFname(cleanUriFormatting(uri)))
+    return vscode.workspace.textDocuments.find((doc) => 
+        uriToFname(getDocumentUri(doc)) === cleanUriFormatting(uriToFname(uri)))
 }
 
 async function processEditFromDaemon(edit: Edit) {
@@ -204,7 +205,7 @@ async function processEditFromDaemon(edit: Edit) {
 
             debug(`Received edit ${edit.revision}`)
 
-            const document = documentForUri(filename)
+            const document = documentForUri(edit.uri)
             if (document) {
                 let textEdit = ethersyncDeltasToVSCodeTextEdits(document, edit.delta)
                 attemptedRemoteEdits.add(textEdit)
@@ -230,9 +231,7 @@ async function processEditFromDaemon(edit: Edit) {
 }
 
 async function processCursorFromDaemon(cursor: CursorFromDaemon) {
-    let uri = cleanUriFormatting(cursor.uri);
-
-    const document = documentForUri(uri)
+    const document = documentForUri(cursor.uri)
 
     try {
         let selections: vscode.DecorationOptions[] = []
@@ -247,7 +246,7 @@ async function processCursorFromDaemon(cursor: CursorFromDaemon) {
                     }
                 })
         }
-        setCursor(cursor.userid, cursor.name || "anonymous", vscode.Uri.parse(uri), selections)
+        setCursor(cursor.userid, cursor.name || "anonymous", vscode.Uri.parse(cleanUriFormatting(uriToFname(cursor.uri))), selections)
     } catch {
         // If we couldn't convert ethersyncRangeToVSCodeRange, it's probably because
         // we received the cursor message before integrating the edits, typing at the end of a line.
