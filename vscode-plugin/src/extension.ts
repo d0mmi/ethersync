@@ -82,11 +82,11 @@ const editType = new rpc.RequestType<Edit, string, void>("edit")
 const cursorType = new rpc.NotificationType<Cursor>("cursor")
 
 function uriToFname(uri: string): string {
-    let prefix = "file://"
+    let prefix = "file:///"
     if (uri.startsWith(prefix)) {
         return uri.slice(prefix.length)
     }
-     prefix = "file:///"
+    prefix = "file://"
     if (uri.startsWith(prefix)) {
         return uri.slice(prefix.length)
     }
@@ -189,8 +189,12 @@ function openCurrentTextDocuments() {
 }
 
 function documentForUri(uri: string): vscode.TextDocument | undefined {
-    return vscode.workspace.textDocuments.find((doc) => 
-        uriToFname(getDocumentUri(doc)) === cleanUriFormatting(uriToFname(uri)))
+    return vscode.workspace.textDocuments.find((doc) => {
+        let docUri = uriToFname(getDocumentUri(doc));
+        let editUri = uriToFname(cleanUriFormatting(uri));
+        debug(`Comparing docUri '${docUri}' with editUri '${editUri}'`);
+        return docUri === editUri;
+    })
 }
 
 async function processEditFromDaemon(edit: Edit) {
