@@ -473,7 +473,7 @@ export function deactivate() {}
 
 function debug(text: string) {
     // Disabled because we don't need it right now.
-    // console.log(Date.now() - t0 + " " + text)
+    console.log(Date.now() - t0 + " " + text)
 }
 
 function updateContents(document: vscode.TextDocument) {
