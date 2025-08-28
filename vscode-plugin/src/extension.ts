@@ -204,9 +204,7 @@ async function processEditFromDaemon(edit: Edit) {
 
             debug(`Received edit ${edit.revision}`)
 
-            const uri = edit.uri
-
-            const document = documentForUri(uri)
+            const document = documentForUri(filename)
             if (document) {
                 let textEdit = ethersyncDeltasToVSCodeTextEdits(document, edit.delta)
                 attemptedRemoteEdits.add(textEdit)
@@ -218,12 +216,12 @@ async function processEditFromDaemon(edit: Edit) {
                     document.save()
                 } else {
                     debug("rejected an applyEdit, sending empty delta")
-                    let theEdit: Edit = {uri, revision: revision.daemon, delta: []}
+                    let theEdit: Edit = {uri: filename, revision: revision.daemon, delta: []}
                     connection.sendRequest(editType, theEdit)
                     revision.editor += 1
                 }
             } else {
-                throw new Error(`No document for URI ${uri}, why is the daemon sending me this?`)
+                throw new Error(`No document for URI ${filename}, why is the daemon sending me this?`)
             }
         })
     } catch (e) {
